@@ -1,0 +1,15 @@
+{
+    "id": "object-editor",
+    "version": "v0.1.0",
+    "engineVer": "v0.10.0",
+    "authors": ["Bli_Aik"],
+    "config": {
+        "snap_grid": 1,
+        "snap_angle": 5,
+        "snap_scale": 0.1,
+        "fine_factor": 0.1,
+        "wheel_scale_step": 0.1,
+        "wheel_rotate_step": 5,
+        "max_undo": 64
+    }
+}
