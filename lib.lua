@@ -1,6 +1,6 @@
 local lib = {}
 
-local LIB_ID = "object-editor"
+local LIB_ID = "kristal-object-selector-plus"
 
 -- Register global for interop
 Registry.registerGlobal("ObjectEditor", lib)
