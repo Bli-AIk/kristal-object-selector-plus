@@ -57,6 +57,21 @@ local wheel_pending = nil  -- snapshot saved before first wheel tick, committed 
 local handled_key_event = nil
 local handled_wheel_event = nil
 
+-- ============================================================
+-- Room return history (DEL = return to previous room)
+-- ============================================================
+
+local room_history = {}          -- LIFO departure log of map ids
+local returning_room = false     -- true while DEL-teleport's loadMap runs
+local room_hook_installed = false
+local DEFAULT_ROOM_HISTORY_MAX = 100
+
+local function get_room_history_max()
+    local max = tonumber(cfg("room_history_max"))
+    if not max then return DEFAULT_ROOM_HISTORY_MAX end
+    return math.max(1, math.floor(max)) -- 0 → 1, matching get_max_undo
+end
+
 local function get_max_undo()
     local max = tonumber(cfg("max_undo")) or DEFAULT_MAX_UNDO
     return math.max(1, math.floor(max))
@@ -371,6 +386,47 @@ local function clear_history()
     redo = {}
     grab_pending = nil
     wheel_pending = nil
+end
+
+-- ============================================================
+-- Room return history (DEL = return to previous room)
+-- ============================================================
+
+local function push_room_history(id)
+    if not id then return end
+    if room_history[#room_history] == id then return end
+    table.insert(room_history, id)
+    local max = get_room_history_max()
+    while #room_history > max do
+        table.remove(room_history, 1)
+    end
+end
+
+local function pop_room_history()
+    if #room_history == 0 then return nil end
+    return table.remove(room_history, #room_history)
+end
+
+local function clear_room_history()
+    room_history = {}
+end
+
+local function install_room_history_hook()
+    if room_hook_installed then return end
+    if not (World and HookSystem) then return end
+    room_hook_installed = true
+    HookSystem.hook(World, "loadMap", function(orig, self, ...)
+        -- self.map is never nil (World:init creates an empty Map), so
+        -- guard on its id; on the very first real load it is still nil.
+        if not returning_room and self and self.map and self.map.id then
+            local target = select(1, ...)
+            local target_id = type(target) == "string" and target or (target and target.id)
+            if target_id ~= self.map.id then -- skip same-room reloads
+                push_room_history(self.map.id)
+            end
+        end
+        return orig(self, ...)
+    end)
 end
 
 -- ============================================================
@@ -700,6 +756,40 @@ end
 -- KRISTAL_EVENT: onKeyPressed
 -- ============================================================
 
+-- DEL returns to the previous room (no fade). Only active during normal
+-- overworld gameplay and dev mode, so it never fights the object editor's
+-- DELETE-key (which only applies while DebugSystem is in SELECTION state).
+local function room_return_on_key(key, is_repeat)
+    if not Kristal.isDevMode() then return false end
+
+    local rk = cfg("room_return_key") or "delete"
+    if rk == "" then return false end -- empty string disables the feature
+    if key ~= rk then return false end
+    if is_repeat then return false end -- callEvent runs before the engine's repeat gate
+
+    local ds = Kristal.DebugSystem
+    if ds and ds.state ~= "IDLE" then return false end -- SELECTION/MENU/FACES/FLAGS pass through
+    if console_open() or editor_input_blocked(ds) then return false end
+
+    -- Only a live overworld: not battle/shop/gameover, not fading, not a menu.
+    if not Game or Game.state ~= "OVERWORLD" then return false end
+    local world = Game.world
+    if not world or world.state ~= "GAMEPLAY" or not world.map or not world.player then return false end
+    if world:hasCutscene() then return false end -- covers dialogue/cutscene textboxes
+
+    local target = pop_room_history()
+    if not target then return false end
+
+    returning_room = true
+    local ok, err = pcall(world.loadMap, world, target)
+    returning_room = false
+    if not ok then
+        print("[kristal-object-selector-plus] room return failed: " .. tostring(err))
+        push_room_history(target) -- don't lose the entry; player stays put
+    end
+    return true
+end
+
 local function handle_key_pressed(key, is_repeat)
     local ds = Kristal.DebugSystem
     if not ds or ds.state ~= "SELECTION" then return false end
@@ -833,6 +923,10 @@ local function handle_key_pressed(key, is_repeat)
 end
 
 function lib:onKeyPressed(key, is_repeat)
+    if room_return_on_key(key, is_repeat) then
+        mark_key_event_handled(key, is_repeat)
+        return true
+    end
     if handle_key_pressed(key, is_repeat) then
         mark_key_event_handled(key, is_repeat)
         return true
@@ -1132,6 +1226,8 @@ patch_debug_system = function(ds)
 end
 
 function lib:init()
+    install_room_history_hook()
+    clear_room_history() -- init fires every Game:enter; don't leak history across sessions
     local ds = Kristal.DebugSystem
     if not ds then return end
     patch_debug_system(ds)
