@@ -76,10 +76,14 @@ local INS = {
     t = 0,               -- fade progress in seconds
     arrows = {},         -- { event } usable room transitions
     selected = nil,      -- index into arrows, or nil
-    manual = false,      -- true while Z/C cycle overrides the facing-based pick
-    last_facing = nil,   -- facing used by the last auto-pick
+    -- Which input drives the highlight. "谁最后谁最优先": the last input
+    -- method wins — facing, Z/C cycle, or mouse cursor.
+    select_mode = "facing", -- "facing" | "cycle" | "mouse"
+    cursor_visible = false, -- whether INS showed the mouse cursor
+    cursor_hide_timer = 0,  -- countdown to hide the cursor again
 }
 local INS_FADE_TIME = 0.25
+local INS_CURSOR_HIDE_TIME = 2.5 -- auto-hide the cursor after this long idle
 
 -- Forward declaration: used by install_room_history_hook below, which is
 -- defined before the INS functions. Lua locals must be declared textually
@@ -923,14 +927,56 @@ local function ins_pick_by_facing(facing)
     return best
 end
 
+-- Screen position of a transition's arrow: on-screen transitions pin the
+-- arrow on the spot, off-screen ones clamp it to the screen border (the
+-- GTA-style edge indicator). Shared by drawing and mouse picking.
+local function ins_arrow_screen_pos(ev, px, py, margin)
+    margin = margin or 20
+    local sx, sy = ev:getScreenPos()
+    local cx = sx + (ev.width or 0) / 2
+    local cy = sy + (ev.height or 0) / 2
+    if cx >= 0 and cx <= SCREEN_WIDTH and cy >= 0 and cy <= SCREEN_HEIGHT then
+        return cx, cy, true
+    end
+    local dx, dy = cx - px, cy - py
+    local ex, ey = ins_edge_point(px, py, dx, dy)
+    -- Note: can't `return f(), false` — a call not in the last position is
+    -- truncated to one value in Lua, which would make the second return a
+    -- boolean. Assign first, then return all three explicitly.
+    local cx2, cy2 = ins_clamp_screen(ex, ey, margin)
+    return cx2, cy2, false
+end
+
+-- Nearest arrow to the mouse cursor (in game coordinates).
+local function ins_pick_by_mouse()
+    local mx, my = Input.getCurrentCursorPosition()
+    local player = Game.world.player
+    if not player then return nil end
+    local px, py = player:getScreenPos()
+    local best, best_d = nil, nil
+    for i, a in ipairs(INS.arrows) do
+        local ax, ay = ins_arrow_screen_pos(a.event, px, py)
+        local dx, dy = ax - mx, ay - my
+        local d = dx * dx + dy * dy
+        if not best or d < best_d then
+            best, best_d = i, d
+        end
+    end
+    return best
+end
+
 ins_finish_exit = function()
     INS.active = false
     INS.state = "IDLE"
     INS.t = 0
     INS.arrows = {}
     INS.selected = nil
-    INS.manual = false
-    INS.last_facing = nil
+    INS.select_mode = "facing"
+    if INS.cursor_visible then
+        INS.cursor_visible = false
+        INS.cursor_hide_timer = 0
+        if Kristal and Kristal.hideCursor then Kristal.hideCursor() end
+    end
 end
 
 local function ins_enter()
@@ -941,15 +987,15 @@ local function ins_enter()
     INS.active = true
     INS.state = "IN"
     INS.t = 0
-    INS.manual = false
-    INS.last_facing = Game.world.player:getFacing()
-    INS.selected = ins_pick_by_facing(INS.last_facing)
+    INS.select_mode = "facing"
+    INS.cursor_visible = false
+    INS.cursor_hide_timer = 0
+    INS.selected = ins_pick_by_facing(Game.world.player:getFacing())
     return true
 end
 
 -- Cycle the highlight by +1 (clockwise, Z) or -1 (counter-clockwise, C),
--- wrapping around. Once a manual cycle happens the facing-based auto-pick is
--- suspended until the player changes their facing.
+-- wrapping around. A manual cycle wins over the other selection inputs.
 local function ins_cycle(dir)
     local n = #INS.arrows
     if n == 0 then return end
@@ -958,14 +1004,13 @@ local function ins_cycle(dir)
     else
         INS.selected = ((INS.selected - 1 + dir) % n) + 1
     end
-    INS.manual = true
+    INS.select_mode = "cycle"
 end
 
 -- Confirm: teleport to the selected transition's target (no fade).
-local function ins_confirm()
-    local a = INS.selected and INS.arrows[INS.selected]
-    ins_finish_exit()
-    if not a then return end
+-- Teleport to the transition's target (no fade). Returns success.
+local function ins_teleport_to(a)
+    if not a then return false end
     local target = a.event.target
     local player = Game.world.player
     local facing = target.facing or (player and player:getFacing())
@@ -977,7 +1022,37 @@ local function ins_confirm()
     end
     if not ok then
         print("[kristal-object-selector-plus] ins teleport failed: " .. tostring(err))
+        return false
     end
+    return true
+end
+
+local function ins_confirm()
+    local a = INS.selected and INS.arrows[INS.selected]
+    ins_finish_exit()
+    if not a then return end
+    ins_teleport_to(a)
+end
+
+-- Right-click: teleport to the target but STAY in INS mode, so the picker
+-- re-opens in the new room with its own transitions. The loadMap hook calls
+-- ins_finish_exit; rebuild the mode seamlessly on top (dim stays full).
+local function ins_confirm_keep()
+    local a = INS.selected and INS.arrows[INS.selected]
+    if not a then return end
+    if not ins_teleport_to(a) then return end
+    INS.arrows = ins_collect_arrows()
+    if #INS.arrows == 0 then
+        return -- new room has no transitions; stay exited
+    end
+    INS.active = true
+    INS.state = "IDLE" -- keep the full dim, no re-fade
+    INS.t = INS_FADE_TIME
+    INS.select_mode = "mouse"
+    INS.cursor_visible = true
+    INS.cursor_hide_timer = INS_CURSOR_HIDE_TIME
+    if Kristal and Kristal.showCursor then Kristal.showCursor() end
+    INS.selected = ins_pick_by_mouse()
 end
 
 local function ins_exit()
@@ -988,10 +1063,17 @@ end
 -- Returns true when the key was consumed by the INS mode.
 local function ins_on_key(key, is_repeat)
     -- Active mode: X exits, Insert confirms, Z/C cycle the highlight.
-    -- Direction keys are left alone so the player keeps moving freely.
-    -- Z/C are captured here (not let through to the engine's confirm/menu
-    -- handling) and the marked event makes the DebugSystem path skip them.
+    -- Direction keys resume the facing-based pick but are NOT consumed, so
+    -- the player keeps moving freely. Z/C are captured here (not let through
+    -- to the engine's confirm/menu handling) and the marked event makes the
+    -- DebugSystem path skip them.
     if INS.active then
+        for _, dir in ipairs({ "up", "down", "left", "right" }) do
+            if Input.is(dir, key) then
+                INS.select_mode = "facing"
+                return false -- let the player move
+            end
+        end
         if key == "x" then
             ins_exit()
             return true
@@ -1002,6 +1084,14 @@ local function ins_on_key(key, is_repeat)
         end
         if key == "c" and not is_repeat then
             ins_cycle(-1)
+            return true
+        end
+        -- Swallow the engine's semantic confirm/cancel/menu keys while INS is
+        -- up, so Enter(confirm), Shift(cancel) and Ctrl(menu) don't trigger
+        -- interactions, cancels or menus. Z/X/C are bound to those same
+        -- semantics but are already handled above. Using the semantic names
+        -- (not hard-coded keys) keeps this correct if the player rebinds.
+        if Input.is("confirm", key) or Input.is("cancel", key) or Input.is("menu", key) then
             return true
         end
         if key_is(key, "insert") and not is_repeat then
@@ -1062,17 +1152,8 @@ local function ins_draw()
             local dx = cx - px
             local dy = cy - py
 
-            local draw_x, draw_y, angle
-            if cx >= 0 and cx <= SCREEN_WIDTH and cy >= 0 and cy <= SCREEN_HEIGHT then
-                -- On screen (player is near): pin the arrow on the transition.
-                draw_x, draw_y, angle = cx, cy, 0
-            else
-                -- Off screen: pin the arrow to the border where the line from
-                -- the player to the transition crosses it, pointing that way.
-                draw_x, draw_y = ins_edge_point(px, py, dx, dy)
-                draw_x, draw_y = ins_clamp_screen(draw_x, draw_y, margin)
-                angle = atan2(dy, dx) + math.pi / 2
-            end
+            local draw_x, draw_y, on_screen = ins_arrow_screen_pos(ev, px, py, margin)
+            local angle = on_screen and 0 or (atan2(dy, dx) + math.pi / 2)
 
             Draw.setColor(1, 1, 1, alpha)
             love.graphics.draw(tex, draw_x, draw_y, angle, 1, 1, w / 2, h / 2)
@@ -1251,6 +1332,19 @@ end
 -- ============================================================
 
 function lib:onMouseMoved(x, y, dx, dy, istouch)
+    -- INS mode: the mouse takes over the highlight (last input wins) and
+    -- temporarily reveals the cursor, which auto-hides after a pause.
+    if INS.active then
+        INS.select_mode = "mouse"
+        INS.selected = ins_pick_by_mouse()
+        if not INS.cursor_visible then
+            INS.cursor_visible = true
+            if Kristal and Kristal.showCursor then Kristal.showCursor() end
+        end
+        INS.cursor_hide_timer = INS_CURSOR_HIDE_TIME
+        return -- don't feed the transform editor
+    end
+
     if TF.mode == TFM.IDLE then return end
     if editor_input_blocked() then tf_cancel(); return end
     if not TF.obj or TF.obj:isRemoved() then tf_exit(); return end
@@ -1318,6 +1412,46 @@ end
 -- ============================================================
 
 function lib:onMousePressed(x, y, button, istouch, presses)
+    -- INS mode: a click switches the highlight to the transition under the
+    -- cursor. Left (1) confirms — teleports and leaves the mode; right (2)
+    -- only switches the highlight and stays in the mode.
+    if INS.active then
+        -- Middle-click teleports the player to the clicked spot (world coords),
+        -- regardless of the highlight. Stays in the mode.
+        if button == 3 then
+            local cam = Game.world.camera
+            if cam then
+                local cam_x, cam_y = cam:getPosition()
+                local zoom_x, zoom_y = cam.zoom_x or 1, cam.zoom_y or 1
+                local mx, my = Input.getCurrentCursorPosition()
+                local wx = (mx - SCREEN_WIDTH / 2) / zoom_x + cam_x
+                local wy = (my - SCREEN_HEIGHT / 2) / zoom_y + cam_y
+                local player = Game.world.player
+                if player then
+                    player:setPosition(wx, wy)
+                end
+            end
+            return
+        end
+
+        local idx = ins_pick_by_mouse()
+        if idx then
+            INS.selected = idx
+            INS.select_mode = "mouse"
+            if not INS.cursor_visible then
+                INS.cursor_visible = true
+                if Kristal and Kristal.showCursor then Kristal.showCursor() end
+            end
+            INS.cursor_hide_timer = INS_CURSOR_HIDE_TIME
+            if button == 1 then
+                ins_confirm() -- teleport + leave the mode
+            elseif button == 2 then
+                ins_confirm_keep() -- teleport + stay in the mode
+            end
+        end
+        return
+    end
+
     -- During transform mode, handled by monkey-patch
     if TF.mode ~= TFM.IDLE then return end
 
@@ -1418,19 +1552,27 @@ end
 
 function lib:postUpdate(dt)
     if not INS.active then return end
-    -- The player can move freely while INS is up; follow their facing — unless
-    -- Z/C forced a highlight, which stays put until the player changes facing.
+    -- Refresh the highlight from the active input method. "cycle" keeps the
+    -- Z/C-forced selection; the player moves freely so facing/mouse positions
+    -- are re-checked every frame.
     if Game and Game.world and Game.world.player then
         local player = Game.world.player
-        local facing = player:getFacing()
-        if INS.manual and facing ~= INS.last_facing then
-            INS.manual = false -- player turned; resume the facing-based pick
+        if INS.select_mode == "facing" then
+            INS.selected = ins_pick_by_facing(player:getFacing())
+        elseif INS.select_mode == "mouse" then
+            INS.selected = ins_pick_by_mouse()
         end
-        if not INS.manual then
-            INS.selected = ins_pick_by_facing(facing)
-        end
-        INS.last_facing = facing
     end
+
+    -- Auto-hide the cursor after the mouse has been idle for a while.
+    if INS.cursor_visible then
+        INS.cursor_hide_timer = INS.cursor_hide_timer - dt
+        if INS.cursor_hide_timer <= 0 then
+            INS.cursor_visible = false
+            if Kristal and Kristal.hideCursor then Kristal.hideCursor() end
+        end
+    end
+
     if INS.state == "IN" then
         INS.t = math.min(INS.t + dt, INS_FADE_TIME)
         if INS.t >= INS_FADE_TIME then
@@ -1486,6 +1628,9 @@ patch_debug_system = function(ds)
 
     -- Patch 2: onMousePressed -> intercept transform mode and capture drag starts
     function ds:onMousePressed(x, y, button, istouch, presses)
+        if INS.active then
+            return -- don't open the object selector (right-click) while INS is up
+        end
         if console_open() then
             commit_pending_undo()
             if TF.mode ~= TFM.IDLE then tf_cancel() end
@@ -1547,6 +1692,10 @@ patch_debug_system = function(ds)
             commit_pending_undo()
             if TF.mode ~= TFM.IDLE then tf_cancel() end
             return
+        end
+
+        if INS.active and Input.is("object_selector", key) then
+            return -- don't open the object selector while INS is up
         end
 
         if consume_marked_key_event(key, is_repeat) then
