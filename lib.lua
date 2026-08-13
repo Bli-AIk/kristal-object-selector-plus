@@ -886,86 +886,13 @@ local function ins_collect_arrows()
 end
 
 -- ============================================================
--- Map name + color-preview for the arrows' destinations
+-- Map name for the arrows' destinations
 -- ============================================================
-
-local preview_cache = {} -- map_id -> canvas (false = no preview)
-local imgdata_cache = setmetatable({}, { __mode = "k" }) -- tileset -> ImageData
-local PREVIEW_CACHE_MAX = 64
 
 local function ins_get_map_name(map_id)
     local data = Registry.getMapData(map_id)
     local name = data and data.properties and data.properties.name
     return (name and name ~= "") and name or map_id
-end
-
--- Build a thumbnail of the destination map: one pixel per tile, colored by
--- sampling the center pixel of that tile's texture. Cached per map id.
-local function ins_build_map_preview(map_id)
-    local ok, canvas = pcall(function()
-        local data = Registry.getMapData(map_id)
-        if not data then return nil end
-
-        -- Use the bottom-most tile layer for the preview.
-        local tile_layer = nil
-        for _, layer in ipairs(data.layers or {}) do
-            if layer.type == "tilelayer" and layer.data then
-                tile_layer = layer
-                break
-            end
-        end
-        if not tile_layer then return nil end
-
-        local map = Registry.createMap(map_id, Game.world) -- tileset instances + gid ranges
-        local w, h = tile_layer.width, tile_layer.height
-        local canvas = love.graphics.newCanvas(math.max(1, w), math.max(1, h))
-        love.graphics.setCanvas(canvas)
-        love.graphics.clear(0, 0, 0, 0)
-        local idx = 0
-        for y = 0, h - 1 do
-            for x = 0, w - 1 do
-                idx = idx + 1
-                local gid = tile_layer.data[idx]
-                if gid and gid ~= 0 then
-                    local tileset, rel = map:getTileset(gid)
-                    if tileset and tileset.texture and tileset.quads and tileset.quads[rel] then
-                        local q = tileset.quads[rel]
-                        local imgdata = imgdata_cache[tileset]
-                        if not imgdata then
-                            imgdata = tileset.texture:getData()
-                            imgdata_cache[tileset] = imgdata
-                        end
-                        local cx = math.floor(q.x + q.width / 2)
-                        local cy = math.floor(q.y + q.height / 2)
-                        local r, g, b, a = imgdata:getPixel(cx, cy)
-                        Draw.setColor(r / 255, g / 255, b / 255, a / 255)
-                        love.graphics.rectangle("fill", x, y, 1, 1)
-                    end
-                end
-            end
-        end
-        love.graphics.setCanvas()
-        return canvas
-    end)
-    return ok and canvas or nil
-end
-
-local function ins_get_map_preview(map_id)
-    local cached = preview_cache[map_id]
-    if cached ~= nil then return cached == false and nil or cached end
-
-    local canvas = ins_build_map_preview(map_id)
-    preview_cache[map_id] = canvas or false
-    -- Keep the cache bounded.
-    local count = 0
-    for k in pairs(preview_cache) do
-        count = count + 1
-    end
-    if count > PREVIEW_CACHE_MAX then
-        preview_cache = {}
-        preview_cache[map_id] = canvas or false
-    end
-    return canvas
 end
 
 -- Pick the transition whose angular sector the player's facing falls in.
@@ -1115,9 +1042,10 @@ local function ins_draw()
     local margin = 20
 
     local normal, selected_tex = ins_get_textures()
-    local font = Assets.getFont and Assets.getFont("main", 12) or love.graphics.getFont()
+    -- UI font at half its default size (i18n redirects "main" to the active
+    -- language's UI font).
+    local font = Assets.getFont and Assets.getFont("main", 16) or love.graphics.getFont()
     local show_name = cfg("insShowMapName") ~= false
-    local show_preview = cfg("insShowMapPreview") ~= false
     local label_font_h = font and font:getHeight() or 14
 
     for i, a in ipairs(INS.arrows) do
@@ -1149,39 +1077,23 @@ local function ins_draw()
             Draw.setColor(1, 1, 1, alpha)
             love.graphics.draw(tex, draw_x, draw_y, angle, 1, 1, w / 2, h / 2)
 
-            -- Label: destination map name + color preview, near the arrow.
+            -- Label: destination map name, near the arrow.
             local dest = ev.target and ev.target.map
             local map_name = dest and show_name and ins_get_map_name(dest) or nil
-            local preview = dest and show_preview and ins_get_map_preview(dest) or nil
-            if map_name or preview then
-                local tw, th, scale = 0, 0, 1
-                if preview then
-                    local cw, ch = preview:getWidth(), preview:getHeight()
-                    scale = math.min(3, 120 / math.max(1, cw), 120 / math.max(1, ch))
-                    tw, th = math.floor(cw * scale), math.floor(ch * scale)
-                end
-                local name_w = map_name and font:getWidth(map_name) or 0
-                local block_w = math.max(tw, name_w)
-                local block_h = (map_name and label_font_h or 0) + (th > 0 and (2 + th) or 0)
-                local bx = draw_x - block_w / 2
+            if map_name then
+                local name_w = font:getWidth(map_name)
+                local bx = draw_x - name_w / 2
                 local by = draw_y + 14
-                if by + block_h > SCREEN_HEIGHT - 6 then
-                    by = draw_y - block_h - 12
+                if by + label_font_h > SCREEN_HEIGHT - 6 then
+                    by = draw_y - label_font_h - 12
                 end
-                bx = math.max(4, math.min(SCREEN_WIDTH - block_w - 4, bx))
+                bx = math.max(4, math.min(SCREEN_WIDTH - name_w - 4, bx))
 
-                if map_name then
-                    love.graphics.setFont(font)
-                    Draw.setColor(0, 0, 0, 0.7 * alpha)
-                    love.graphics.print(map_name, bx + 1, by + 1)
-                    Draw.setColor(1, 1, 1, alpha)
-                    love.graphics.print(map_name, bx, by)
-                end
-                if preview then
-                    local py = by + (map_name and (label_font_h + 2) or 0)
-                    Draw.setColor(1, 1, 1, alpha)
-                    love.graphics.draw(preview, bx + (block_w - tw) / 2, py, 0, scale, scale)
-                end
+                love.graphics.setFont(font)
+                Draw.setColor(0, 0, 0, 0.7 * alpha)
+                love.graphics.print(map_name, bx + 1, by + 1)
+                Draw.setColor(1, 1, 1, alpha)
+                love.graphics.print(map_name, bx, by)
             end
         end
     end

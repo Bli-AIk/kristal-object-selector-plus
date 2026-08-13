@@ -13,7 +13,6 @@
         "max_undo": 64,
         "room_return_key": "delete",
         "room_history_max": 100,
-        "insShowMapName": true,
-        "insShowMapPreview": true
+        "insShowMapName": true
     }
 }
