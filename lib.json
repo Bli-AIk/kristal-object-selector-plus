@@ -1,6 +1,6 @@
 {
     "id": "kristal-object-selector-plus",
-    "version": "v0.1.0", // x-release-please-version
+    "version": "v0.2.0", // x-release-please-version
     "engineVer": "v0.10.0",
     "authors": ["Bli_Aik"],
     "config": {
