@@ -846,6 +846,27 @@ local function ins_get_textures()
     return Assets.getTexture("ins/arrow_normal"), Assets.getTexture("ins/arrow_selected")
 end
 
+-- GTA-style edge indicator: keep an off-screen transition's arrow on the
+-- screen border, in the direction of the transition. If the transition is
+-- on screen (the player is near it) the arrow sits right on it instead.
+local function ins_edge_point(px, py, dx, dy)
+    if dx == 0 and dy == 0 then return px, py end
+    local t = math.huge
+    if dx > 0 then t = math.min(t, (SCREEN_WIDTH - px) / dx) end
+    if dx < 0 then t = math.min(t, (0 - px) / dx) end
+    if dy > 0 then t = math.min(t, (SCREEN_HEIGHT - py) / dy) end
+    if dy < 0 then t = math.min(t, (0 - py) / dy) end
+    if t == math.huge or t < 0 then return px, py end
+    return px + dx * t, py + dy * t
+end
+
+local function ins_clamp_screen(x, y, margin)
+    margin = margin or 16
+    local cx = math.max(margin, math.min(SCREEN_WIDTH - margin, x))
+    local cy = math.max(margin, math.min(SCREEN_HEIGHT - margin, y))
+    return cx, cy
+end
+
 -- Collect the map-targeting transition events of the current room,
 -- skipping ones without a usable destination (no map, or neither
 -- marker nor x/y).
@@ -973,11 +994,10 @@ local function ins_draw()
     Draw.setColor(0, 0, 0, 0.6 * alpha)
     love.graphics.rectangle("fill", 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT)
 
-    -- Arrows anchored around the player, each rotated to point at its
-    -- transition (the texture faces up, so it can rotate freely 360°).
     local player = Game.world.player
     if not player then return end
     local px, py = player:getScreenPos()
+    local margin = 20
 
     local normal, selected_tex = ins_get_textures()
     for i, a in ipairs(INS.arrows) do
@@ -985,15 +1005,29 @@ local function ins_draw()
         if tex then
             local ev = a.event
             local w, h = tex:getWidth(), tex:getHeight()
-            local dx = ev.x - player.x
-            local dy = ev.y - player.y
-            local len = math.max(1, math.sqrt(dx * dx + dy * dy))
-            local dist = 30 -- offset from the player so arrows don't stack
-            local ox = px + dx / len * dist
-            local oy = py + dy / len * dist
-            local angle = atan2(dy, dx) + math.pi / 2
+
+            -- Transition center in screen space.
+            local sx, sy = ev:getScreenPos()
+            local cx = sx + (ev.width or 0) / 2
+            local cy = sy + (ev.height or 0) / 2
+
+            local dx = cx - px
+            local dy = cy - py
+
+            local draw_x, draw_y, angle
+            if cx >= 0 and cx <= SCREEN_WIDTH and cy >= 0 and cy <= SCREEN_HEIGHT then
+                -- On screen (player is near): pin the arrow on the transition.
+                draw_x, draw_y, angle = cx, cy, 0
+            else
+                -- Off screen: pin the arrow to the border where the line from
+                -- the player to the transition crosses it, pointing that way.
+                draw_x, draw_y = ins_edge_point(px, py, dx, dy)
+                draw_x, draw_y = ins_clamp_screen(draw_x, draw_y, margin)
+                angle = atan2(dy, dx) + math.pi / 2
+            end
+
             Draw.setColor(1, 1, 1, alpha)
-            love.graphics.draw(tex, ox, oy, angle, 1, 1, w / 2, h / 2)
+            love.graphics.draw(tex, draw_x, draw_y, angle, 1, 1, w / 2, h / 2)
         end
     end
 end
