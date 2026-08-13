@@ -883,26 +883,29 @@ local function ins_collect_arrows()
     return arrows
 end
 
--- Pick the transition that best matches the player's facing: among the
--- transitions lying in that compass direction (dominant axis), the nearest.
+-- Pick the transition whose angular sector the player's facing falls in.
+-- The circle is split evenly among all transitions (Voronoi: each sector
+-- covers 360/N degrees, boundaries between adjacent transitions), so one
+-- option is always highlighted, two split it in half, three in thirds, etc.
 -- Returns an index into INS.arrows, or nil.
+local function ins_angle_diff(a, b)
+    local d = (a - b) % (2 * math.pi)
+    if d > math.pi then d = 2 * math.pi - d end
+    return d
+end
+
 local function ins_pick_by_facing(facing)
     local vec = INS_DIR_VECTORS[facing]
     if not vec then return nil end
-    local fx, fy = vec[1], vec[2]
+    local theta = atan2(vec[2], vec[1])
     local player = Game.world.player
     local best, best_d = nil, nil
     for i, a in ipairs(INS.arrows) do
         local ev = a.event
-        local dx = ev.x - player.x
-        local dy = ev.y - player.y
-        local in_dir = (fx ~= 0 and dx * fx > 0 and math.abs(dx) >= math.abs(dy))
-            or (fy ~= 0 and dy * fy > 0 and math.abs(dy) >= math.abs(dx))
-        if in_dir then
-            local d = dx * dx + dy * dy
-            if not best or d < best_d then
-                best, best_d = i, d
-            end
+        local angle = atan2(ev.y - player.y, ev.x - player.x)
+        local d = ins_angle_diff(theta, angle)
+        if not best or d < best_d then
+            best, best_d = i, d
         end
     end
     return best
