@@ -16,6 +16,6 @@ jobs:
       - name: Install LuaJIT and jq
         run: sudo apt-get update && sudo apt-get install -y luajit jq
       - name: Validate library manifest
-        run: jq empty lib.json
+        run: sed 's|// x-release-please-version||' lib.json | jq empty
       - name: Compile Lua source
         run: luajit -e 'assert(loadfile("lib.lua"))'
