@@ -74,11 +74,33 @@ local INS = {
     active = false,
     state = "IDLE",      -- "IN" (fading in) | "IDLE" | "OUT" (fading out)
     t = 0,               -- fade progress in seconds
-    arrows = {},         -- { event, x, y } usable transitions, screen coords
+    arrows = {},         -- { event } usable room transitions
     selected = nil,      -- index into arrows, or nil
-    prev_lock = false,   -- Game.lock_movement to restore on exit
 }
 local INS_FADE_TIME = 0.25
+
+-- Forward declaration: used by install_room_history_hook below, which is
+-- defined before the INS functions. Lua locals must be declared textually
+-- first to be captured as upvalues.
+local ins_finish_exit
+
+-- Key aliases: match the Insert/Delete nav keys and their numpad variants.
+-- LÖVE has no kpinsert/kpdelete; with NumLock off the numpad's 0 acts as
+-- Insert and "." as Delete, reported as "kp0" / "kpperiod". Falls back to
+-- an exact match for keys with no aliases.
+local KEY_ALIASES = {
+    insert = { "insert", "kpinsert", "kp0" },
+    delete = { "delete", "kpdelete", "kpperiod" },
+}
+
+local function key_is(key, name)
+    local aliases = KEY_ALIASES[name]
+    if not aliases then return key == name end
+    for _, a in ipairs(aliases) do
+        if key == a then return true end
+    end
+    return false
+end
 
 local function get_room_history_max()
     local max = tonumber(cfg("room_history_max"))
@@ -430,6 +452,10 @@ local function install_room_history_hook()
     if not (World and HookSystem) then return end
     room_hook_installed = true
     HookSystem.hook(World, "loadMap", function(orig, self, ...)
+        -- Leave INS mode when the player walks into a transition on their own.
+        if INS.active then
+            ins_finish_exit()
+        end
         -- self.map is never nil (World:init creates an empty Map), so
         -- guard on its id; on the very first real load it is still nil.
         if not returning_room and self and self.map and self.map.id then
@@ -779,7 +805,7 @@ local function room_return_on_key(key, is_repeat)
 
     local rk = cfg("room_return_key") or "delete"
     if rk == "" then return false end -- empty string disables the feature
-    if key ~= rk then return false end
+    if not key_is(key, rk) then return false end
     if is_repeat then return false end -- callEvent runs before the engine's repeat gate
 
     local ds = Kristal.DebugSystem
@@ -820,15 +846,6 @@ local function ins_get_textures()
     return Assets.getTexture("ins/arrow_normal"), Assets.getTexture("ins/arrow_selected")
 end
 
--- Keep an off-screen transition's arrow on screen by clamping it to the
--- nearest screen edge, so every transition stays pickable.
-local function ins_clamp_screen(x, y)
-    local margin = 16
-    local cx = math.max(margin, math.min(SCREEN_WIDTH - margin, x))
-    local cy = math.max(margin, math.min(SCREEN_HEIGHT - margin, y))
-    return cx, cy
-end
-
 -- Collect the map-targeting transition events of the current room,
 -- skipping ones without a usable destination (no map, or neither
 -- marker nor x/y).
@@ -839,10 +856,7 @@ local function ins_collect_arrows()
     for _, ev in ipairs(events) do
         local target = ev and ev.target
         if target and target.map and (target.marker or (target.x and target.y)) then
-            local ex, ey = ev:getScreenPos()
-            local cx, cy = ex + (ev.width or 0) / 2, ey + (ev.height or 0) / 2
-            cx, cy = ins_clamp_screen(cx, cy)
-            table.insert(arrows, { event = ev, x = cx, y = cy })
+            table.insert(arrows, { event = ev })
         end
     end
     return arrows
@@ -873,25 +887,12 @@ local function ins_pick_by_facing(facing)
     return best
 end
 
-local function ins_set_facing(facing)
-    local player = Game.world.player
-    if not player then return end
-    if player:getFacing() ~= facing then
-        player:setFacing(facing)
-    end
-    INS.selected = ins_pick_by_facing(facing)
-end
-
-local function ins_finish_exit()
+ins_finish_exit = function()
     INS.active = false
     INS.state = "IDLE"
     INS.t = 0
     INS.arrows = {}
     INS.selected = nil
-    if Game then
-        Game.lock_movement = INS.prev_lock
-    end
-    INS.prev_lock = false
 end
 
 local function ins_enter()
@@ -902,8 +903,6 @@ local function ins_enter()
     INS.active = true
     INS.state = "IN"
     INS.t = 0
-    INS.prev_lock = Game.lock_movement
-    Game.lock_movement = true
     INS.selected = ins_pick_by_facing(Game.world.player:getFacing())
     return true
 end
@@ -934,19 +933,15 @@ end
 
 -- Returns true when the key was consumed by the INS mode.
 local function ins_on_key(key, is_repeat)
-    -- Active mode: direction keys re-face + re-pick, X exits, Insert confirms.
+    -- Active mode: X exits, Insert confirms. Direction keys are left alone so
+    -- the player keeps moving freely; the highlight follows their facing
+    -- (refreshed every frame in postUpdate).
     if INS.active then
-        for _, dir in ipairs({ "up", "down", "left", "right" }) do
-            if Input.is(dir, key) then
-                ins_set_facing(dir)
-                return true
-            end
-        end
         if key == "x" then
             ins_exit()
             return true
         end
-        if key == "insert" and not is_repeat then
+        if key_is(key, "insert") and not is_repeat then
             ins_confirm()
             return true
         end
@@ -954,7 +949,7 @@ local function ins_on_key(key, is_repeat)
     end
 
     -- Inactive: Insert toggles the mode on (overworld gameplay only).
-    if key == "insert" and not is_repeat then
+    if key_is(key, "insert") and not is_repeat then
         if not Kristal.isDevMode() then return false end
         local ds = Kristal.DebugSystem
         if ds and ds.state ~= "IDLE" then return false end
@@ -978,14 +973,27 @@ local function ins_draw()
     Draw.setColor(0, 0, 0, 0.6 * alpha)
     love.graphics.rectangle("fill", 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT)
 
-    -- Arrows pointing at each transition.
+    -- Arrows anchored around the player, each rotated to point at its
+    -- transition (the texture faces up, so it can rotate freely 360°).
+    local player = Game.world.player
+    if not player then return end
+    local px, py = player:getScreenPos()
+
     local normal, selected_tex = ins_get_textures()
     for i, a in ipairs(INS.arrows) do
         local tex = (i == INS.selected) and selected_tex or normal
         if tex then
+            local ev = a.event
             local w, h = tex:getWidth(), tex:getHeight()
+            local dx = ev.x - player.x
+            local dy = ev.y - player.y
+            local len = math.max(1, math.sqrt(dx * dx + dy * dy))
+            local dist = 30 -- offset from the player so arrows don't stack
+            local ox = px + dx / len * dist
+            local oy = py + dy / len * dist
+            local angle = atan2(dy, dx) + math.pi / 2
             Draw.setColor(1, 1, 1, alpha)
-            love.graphics.draw(tex, a.x - w / 2, a.y - h / 2)
+            love.graphics.draw(tex, ox, oy, angle, 1, 1, w / 2, h / 2)
         end
     end
 end
@@ -1309,6 +1317,11 @@ end
 
 function lib:postUpdate(dt)
     if not INS.active then return end
+    -- The player can move freely while INS is up; re-pick the highlighted
+    -- transition to follow their facing.
+    if Game and Game.world and Game.world.player then
+        INS.selected = ins_pick_by_facing(Game.world.player:getFacing())
+    end
     if INS.state == "IN" then
         INS.t = math.min(INS.t + dt, INS_FADE_TIME)
         if INS.t >= INS_FADE_TIME then
