@@ -76,6 +76,8 @@ local INS = {
     t = 0,               -- fade progress in seconds
     arrows = {},         -- { event } usable room transitions
     selected = nil,      -- index into arrows, or nil
+    manual = false,      -- true while Z/C cycle overrides the facing-based pick
+    last_facing = nil,   -- facing used by the last auto-pick
 }
 local INS_FADE_TIME = 0.25
 
@@ -917,6 +919,8 @@ ins_finish_exit = function()
     INS.t = 0
     INS.arrows = {}
     INS.selected = nil
+    INS.manual = false
+    INS.last_facing = nil
 end
 
 local function ins_enter()
@@ -927,8 +931,24 @@ local function ins_enter()
     INS.active = true
     INS.state = "IN"
     INS.t = 0
-    INS.selected = ins_pick_by_facing(Game.world.player:getFacing())
+    INS.manual = false
+    INS.last_facing = Game.world.player:getFacing()
+    INS.selected = ins_pick_by_facing(INS.last_facing)
     return true
+end
+
+-- Cycle the highlight by +1 (clockwise, Z) or -1 (counter-clockwise, C),
+-- wrapping around. Once a manual cycle happens the facing-based auto-pick is
+-- suspended until the player changes their facing.
+local function ins_cycle(dir)
+    local n = #INS.arrows
+    if n == 0 then return end
+    if not INS.selected then
+        INS.selected = 1
+    else
+        INS.selected = ((INS.selected - 1 + dir) % n) + 1
+    end
+    INS.manual = true
 end
 
 -- Confirm: teleport to the selected transition's target (no fade).
@@ -957,12 +977,21 @@ end
 
 -- Returns true when the key was consumed by the INS mode.
 local function ins_on_key(key, is_repeat)
-    -- Active mode: X exits, Insert confirms. Direction keys are left alone so
-    -- the player keeps moving freely; the highlight follows their facing
-    -- (refreshed every frame in postUpdate).
+    -- Active mode: X exits, Insert confirms, Z/C cycle the highlight.
+    -- Direction keys are left alone so the player keeps moving freely.
+    -- Z/C are captured here (not let through to the engine's confirm/menu
+    -- handling) and the marked event makes the DebugSystem path skip them.
     if INS.active then
         if key == "x" then
             ins_exit()
+            return true
+        end
+        if key == "z" and not is_repeat then
+            ins_cycle(1)
+            return true
+        end
+        if key == "c" and not is_repeat then
+            ins_cycle(-1)
             return true
         end
         if key_is(key, "insert") and not is_repeat then
@@ -1354,10 +1383,18 @@ end
 
 function lib:postUpdate(dt)
     if not INS.active then return end
-    -- The player can move freely while INS is up; re-pick the highlighted
-    -- transition to follow their facing.
+    -- The player can move freely while INS is up; follow their facing — unless
+    -- Z/C forced a highlight, which stays put until the player changes facing.
     if Game and Game.world and Game.world.player then
-        INS.selected = ins_pick_by_facing(Game.world.player:getFacing())
+        local player = Game.world.player
+        local facing = player:getFacing()
+        if INS.manual and facing ~= INS.last_facing then
+            INS.manual = false -- player turned; resume the facing-based pick
+        end
+        if not INS.manual then
+            INS.selected = ins_pick_by_facing(facing)
+        end
+        INS.last_facing = facing
     end
     if INS.state == "IN" then
         INS.t = math.min(INS.t + dt, INS_FADE_TIME)
