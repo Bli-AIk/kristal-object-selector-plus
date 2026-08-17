@@ -3,7 +3,7 @@
 [![license](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-APACHE) <img src="https://img.shields.io/github/repo-size/Bli-AIk/kristal-object-selector-plus.svg"/> <img src="https://img.shields.io/github/last-commit/Bli-AIk/kristal-object-selector-plus.svg"/> <img src="https://img.shields.io/github/v/release/Bli-AIk/kristal-object-selector-plus.svg"/> <br>
 <img src="https://img.shields.io/badge/Deltarune-001225?style=for-the-badge&labelColor=001225&logo=undertale&logoColor=ff0000" /> <img src="https://img.shields.io/badge/Lua-2C2D72?style=for-the-badge&logo=lua&logoColor=white" /> <img src="https://img.shields.io/badge/Kristal-FF6B35?style=for-the-badge&logo=love2d&logoColor=white" />
 
-**kristal-object-selector-plus** is a development-time scene object editor for Kristal v0.10, letting you place and arrange items directly in the game.
+**kristal-object-selector-plus** is a development-time scene object editor for Kristal v0.11.0-dev (`f62afea`), letting you place and arrange items directly in the game.
 
 Its interaction model is heavily influenced by **Blender**: select an object, press `G` to grab and drag it, `R` to rotate, `S` to scale.
 
@@ -11,9 +11,9 @@ Its interaction model is heavily influenced by **Blender**: select an object, pr
 
 ## Kristal Version Support
 
-| `kristal`                                                                                                                  | `kristal-object-selector-plus` |
-| -------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| [v0.10.0](https://github.com/KristalTeam/Kristal/commit/752bc0688ba97ca8a256ba9125b7e05a1ca6edbd) (`752bc068`, 2026-06-23) | 0.1.0                          |
+| `kristal`                                                                                                                          | `kristal-object-selector-plus` |
+| ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| [v0.11.0-dev](https://github.com/KristalTeam/Kristal/commit/f62afea63ccab02f468c24ac0d096bd8a2c9aa81) (`f62afea`, 2026-08-16) | 0.2.0                          |
 
 ## Design
 
