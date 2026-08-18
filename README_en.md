@@ -3,7 +3,7 @@
 [![license](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-APACHE) <img src="https://img.shields.io/github/repo-size/Bli-AIk/kristal-object-selector-plus.svg"/> <img src="https://img.shields.io/github/last-commit/Bli-AIk/kristal-object-selector-plus.svg"/> <img src="https://img.shields.io/github/v/release/Bli-AIk/kristal-object-selector-plus.svg"/> <br>
 <img src="https://img.shields.io/badge/Deltarune-001225?style=for-the-badge&labelColor=001225&logo=undertale&logoColor=ff0000" /> <img src="https://img.shields.io/badge/Lua-2C2D72?style=for-the-badge&logo=lua&logoColor=white" /> <img src="https://img.shields.io/badge/Kristal-FF6B35?style=for-the-badge&logo=love2d&logoColor=white" />
 
-**kristal-object-selector-plus** is a development-time scene object editor for Kristal v0.11.0-dev (`f62afea`), letting you place and arrange items directly in the game.
+**kristal-object-selector-plus** is a development-time scene object editor for Kristal, letting you place and arrange items directly in the game.
 
 Its interaction model is heavily influenced by **Blender**: select an object, press `G` to grab and drag it, `R` to rotate, `S` to scale.
 

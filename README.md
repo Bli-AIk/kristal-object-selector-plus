@@ -3,7 +3,7 @@
 [![license](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-APACHE) <img src="https://img.shields.io/github/repo-size/Bli-AIk/kristal-object-selector-plus.svg"/> <img src="https://img.shields.io/github/last-commit/Bli-AIk/kristal-object-selector-plus.svg"/> <img src="https://img.shields.io/github/v/release/Bli-AIk/kristal-object-selector-plus.svg"/> <br>
 <img src="https://img.shields.io/badge/Deltarune-001225?style=for-the-badge&labelColor=001225&logo=undertale&logoColor=ff0000" /> <img src="https://img.shields.io/badge/Lua-2C2D72?style=for-the-badge&logo=lua&logoColor=white"/> <img src="https://img.shields.io/badge/Kristal-3B3B3B?style=for-the-badge"/>
 
-**kristal-object-selector-plus** 是一个面向 Kristal v0.11.0-dev（`f62afea`）开发期的场景对象编辑器，让你直接在游戏里摆放物品。
+**kristal-object-selector-plus** 是一个面向 Kristal 开发期的场景对象编辑器，让你直接在游戏里摆放物品。
 
 它的交互方式深受 **Blender** 的影响：选中一个对象，按 `G` 抓起来拖、按 `R` 转、按 `S` 缩放。
 
