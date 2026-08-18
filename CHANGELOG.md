@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.1](https://github.com/Bli-AIk/kristal-object-selector-plus/compare/v0.2.0...v0.2.1) (2026-08-18)
+
+
+### chore
+
+* force release 0.2.1 ([81326f4](https://github.com/Bli-AIk/kristal-object-selector-plus/commit/81326f437f5114121354df5abf10a21bdc736acd))
+
+
+### Features
+
+* support Kristal 0.11.0-dev ([a1bac52](https://github.com/Bli-AIk/kristal-object-selector-plus/commit/a1bac526db62f1a1415d2b50d7b296c7f385cee5))
+
 ## [0.2.0](https://github.com/Bli-AIk/kristal-object-selector-plus/compare/v0.1.0...v0.2.0) (2026-08-13)
 
 
