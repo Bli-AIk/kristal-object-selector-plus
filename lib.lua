@@ -1,3 +1,5 @@
+---@class ObjectEditor
+--- Registered globally as `ObjectEditor` for interop with mod code.
 local lib = {}
 
 local LIB_ID = "kristal-object-selector-plus"
