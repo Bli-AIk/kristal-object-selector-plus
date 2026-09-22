@@ -1726,6 +1726,12 @@ patch_debug_system = function(ds)
 end
 
 function lib:init()
+    -- Announced through the engine's "System" logger; kristal-i18n keys off
+    -- this exact English wording to translate it (see its localizeConsoleSegments).
+    if Logging and Logging.info then
+        Logging.info("Enabled library " .. self.info.id .. ".")
+    end
+
     install_room_history_hook()
     clear_room_history() -- init fires every Game:enter; don't leak history across sessions
     local ds = Kristal.DebugSystem
